@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pion/logging"
 	"github.com/pion/stun"
 	"github.com/pion/turn/internal/allocation"
 	"github.com/pion/turn/internal/ipnet"
@@ -19,6 +20,10 @@ const (
 )
 
 type curriedSend func(class stun.MessageClass, method stun.Method, transactionID [stun.TransactionIDSize]byte, attrs ...stun.Setter) error
+
+type Server struct {
+	log logging.LeveledLogger
+}
 
 func authenticateRequest(curriedSend curriedSend, m *stun.Message, callingMethod stun.Method, realm string, authHandler AuthHandler, srcAddr net.Addr) (stun.MessageIntegrity, string, error) {
 	handleErr := func(err error) (stun.MessageIntegrity, string, error) {
