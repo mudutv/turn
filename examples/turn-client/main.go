@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pion/logging"
-	"github.com/pion/turn"
+	"github.com/mudutv/logging"
+	"github.com/mudutv/turn"
 )
 
 func main() {

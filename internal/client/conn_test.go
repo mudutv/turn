@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/pion/stun"
+	"github.com/mudutv/stun"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pion/stun"
-	"github.com/pion/turn/internal/allocation"
-	"github.com/pion/turn/internal/ipnet"
-	"github.com/pion/turn/internal/proto"
+	"github.com/mudutv/stun"
+	"github.com/mudutv/turn/internal/allocation"
+	"github.com/mudutv/turn/internal/ipnet"
+	"github.com/mudutv/turn/internal/proto"
 	"github.com/pkg/errors"
 )
 

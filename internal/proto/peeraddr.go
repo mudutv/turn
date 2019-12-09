@@ -3,7 +3,7 @@ package proto
 import (
 	"net"
 
-	"github.com/pion/stun"
+	"github.com/mudutv/stun"
 )
 
 // PeerAddress implements XOR-PEER-ADDRESS attribute.

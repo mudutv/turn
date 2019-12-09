@@ -5,7 +5,7 @@ package proto
 import (
 	"fmt"
 
-	"github.com/pion/stun"
+	"github.com/mudutv/stun"
 )
 
 type attr interface {

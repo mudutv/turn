@@ -3,7 +3,7 @@ package proto
 import (
 	"testing"
 
-	"github.com/pion/stun"
+	"github.com/mudutv/stun"
 )
 
 func TestEvenPort(t *testing.T) {

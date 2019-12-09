@@ -3,8 +3,8 @@ package turn
 import (
 	"net"
 
-	"github.com/pion/stun"
-	"github.com/pion/turn/internal/ipnet"
+	"github.com/mudutv/stun"
+	"github.com/mudutv/turn/internal/ipnet"
 )
 
 // caller must hold the mutex

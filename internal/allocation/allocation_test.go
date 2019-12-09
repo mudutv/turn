@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pion/stun"
-	"github.com/pion/turn/internal/ipnet"
-	"github.com/pion/turn/internal/proto"
+	"github.com/mudutv/stun"
+	"github.com/mudutv/turn/internal/ipnet"
+	"github.com/mudutv/turn/internal/proto"
 	"github.com/stretchr/testify/assert"
 )
 

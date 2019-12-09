@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pion/logging"
-	"github.com/pion/turn/internal/proto"
+	"github.com/mudutv/logging"
+	"github.com/mudutv/turn/internal/proto"
 )
 
 func TestManager(t *testing.T) {

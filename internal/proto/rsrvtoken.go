@@ -1,6 +1,6 @@
 package proto
 
-import "github.com/pion/stun"
+import "github.com/mudutv/stun"
 
 // ReservationToken represents RESERVATION-TOKEN attribute.
 //
