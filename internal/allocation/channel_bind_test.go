@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mudutv/turn/internal/proto"
+	"github.com/mudutv/turn/v2/internal/proto"
 )
 
 func TestChannelBind(t *testing.T) {

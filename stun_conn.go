@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/mudutv/stun"
-	"github.com/mudutv/turn/internal/proto"
+	"github.com/mudutv/turn/v2/internal/proto"
 )
 
 var errInvalidTURNFrame = errors.New("data is not a valid TURN frame, no STUN or ChannelData found")
@@ -40,17 +40,16 @@ func consumeSingleTURNFrame(p []byte) (int, error) {
 	}
 
 	var datagramSize uint16
-	switch {
-	case stun.IsMessage(p):
+	if stun.IsMessage(p) {
 		datagramSize = binary.BigEndian.Uint16(p[2:4]) + stunHeaderSize
-	case proto.IsChannelData(p):
+	} else if num := binary.BigEndian.Uint16(p[0:4]); proto.ChannelNumber(num).Valid() {
 		datagramSize = binary.BigEndian.Uint16(p[channelDataNumberSize:channelDataHeaderSize])
 		if paddingOverflow := (datagramSize + channelDataPadding) % channelDataPadding; paddingOverflow != 0 {
 			datagramSize = (datagramSize + channelDataPadding) - paddingOverflow
 		}
 
 		datagramSize += channelDataHeaderSize
-	default:
+	} else {
 		return 0, errInvalidTURNFrame
 	}
 

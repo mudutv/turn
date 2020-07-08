@@ -11,9 +11,8 @@ import (
 	"github.com/mudutv/logging"
 	"github.com/mudutv/stun"
 	"github.com/mudutv/transport/vnet"
-	"github.com/mudutv/turn/internal/client"
-	"github.com/mudutv/turn/internal/proto"
-	"github.com/pkg/errors"
+	"github.com/mudutv/turn/v2/internal/client"
+	"github.com/mudutv/turn/v2/internal/proto"
 )
 
 const (
@@ -65,12 +64,18 @@ type Client struct {
 	listenTryLock client.TryLock         // thread-safe
 	net           *vnet.Net              // read-only
 	mutex         sync.RWMutex           // thread-safe
+	mutexTrMap    sync.Mutex             // thread-safe
 	log           logging.LeveledLogger  // read-only
 }
 
 // NewClient returns a new Client instance. listeningAddress is the address and port to listen on, default "0.0.0.0:0"
 func NewClient(config *ClientConfig) (*Client, error) {
-	log := config.LoggerFactory.NewLogger("turnc")
+	loggerFactory := config.LoggerFactory
+	if loggerFactory == nil {
+		loggerFactory = logging.NewDefaultLoggerFactory()
+	}
+
+	log := loggerFactory.NewLogger("turnc")
 
 	if config.Conn == nil {
 		return nil, fmt.Errorf("conn cannot not be nil")
@@ -185,6 +190,9 @@ func (c *Client) Listen() error {
 
 // Close closes this client
 func (c *Client) Close() {
+	c.mutexTrMap.Lock()
+	defer c.mutexTrMap.Unlock()
+
 	c.trMap.CloseAndDeleteAll()
 }
 
@@ -241,7 +249,7 @@ func (c *Client) Allocate() (net.PacketConn, error) {
 	msg, err := stun.Build(
 		stun.TransactionID,
 		stun.NewType(stun.MethodAllocate, stun.ClassRequest),
-		proto.RequestedTransportUDP,
+		proto.RequestedTransport{Protocol: proto.ProtoUDP},
 		stun.Fingerprint,
 	)
 	if err != nil {
@@ -271,7 +279,7 @@ func (c *Client) Allocate() (net.PacketConn, error) {
 	msg, err = stun.Build(
 		stun.TransactionID,
 		stun.NewType(stun.MethodAllocate, stun.ClassRequest),
-		proto.RequestedTransportUDP,
+		proto.RequestedTransport{Protocol: proto.ProtoUDP},
 		&c.username,
 		&c.realm,
 		&nonce,
@@ -327,17 +335,19 @@ func (c *Client) Allocate() (net.PacketConn, error) {
 }
 
 // PerformTransaction performs STUN transaction
-func (c *Client) PerformTransaction(msg *stun.Message, to net.Addr, dontWait bool) (client.TransactionResult, error) {
+func (c *Client) PerformTransaction(msg *stun.Message, to net.Addr, ignoreResult bool) (client.TransactionResult,
+	error) {
 	trKey := b64.StdEncoding.EncodeToString(msg.TransactionID[:])
 
 	raw := make([]byte, len(msg.Raw))
 	copy(raw, msg.Raw)
 
 	tr := client.NewTransaction(&client.TransactionConfig{
-		Key:      trKey,
-		Raw:      raw,
-		To:       to,
-		Interval: c.rto,
+		Key:          trKey,
+		Raw:          raw,
+		To:           to,
+		Interval:     c.rto,
+		IgnoreResult: ignoreResult,
 	})
 
 	c.trMap.Insert(trKey, tr)
@@ -351,7 +361,7 @@ func (c *Client) PerformTransaction(msg *stun.Message, to net.Addr, dontWait boo
 	tr.StartRtxTimer(c.onRtxTimeout)
 
 	// If dontWait is true, get the transaction going and return immediately
-	if dontWait {
+	if ignoreResult {
 		return client.TransactionResult{}, nil
 	}
 
@@ -376,7 +386,6 @@ func (c *Client) OnDeallocated(relayedAddr net.Addr) {
 // If not handled, it is assumed that the packet is application data.
 // If an error is returned, the caller should discard the packet regardless.
 func (c *Client) HandleInbound(data []byte, from net.Addr) (bool, error) {
-
 	// +-------------------+-------------------------------+
 	// |   Return Values   |                               |
 	// +-------------------+       Meaning / Action        |
@@ -398,12 +407,8 @@ func (c *Client) HandleInbound(data []byte, from net.Addr) (bool, error) {
 	switch {
 	case stun.IsMessage(data):
 		return true, c.handleSTUNMessage(data, from)
-	case len(c.turnServStr) != 0 && from.String() == c.turnServStr:
-		// received from TURN server
-		if proto.IsChannelData(data) {
-			return true, c.handleChannelData(data)
-		}
-		return true, fmt.Errorf("unexpected packet from TURN server")
+	case proto.IsChannelData(data):
+		return true, c.handleChannelData(data)
 	case len(c.stunServStr) != 0 && from.String() == c.stunServStr:
 		// received from STUN server but it is not a STUN message
 		return true, fmt.Errorf("non-STUN message from STUN server")
@@ -421,11 +426,11 @@ func (c *Client) handleSTUNMessage(data []byte, from net.Addr) error {
 
 	msg := &stun.Message{Raw: raw}
 	if err := msg.Decode(); err != nil {
-		return errors.Wrap(err, "failed to decode STUN message")
+		return fmt.Errorf("failed to decode STUN message: %s", err.Error())
 	}
 
 	if msg.Type.Class == stun.ClassRequest {
-		return fmt.Errorf("unpexpected STUN request message: %s", msg.String())
+		return fmt.Errorf("unexpected STUN request message: %s", msg.String())
 	}
 
 	if msg.Type.Class == stun.ClassIndication {
@@ -463,8 +468,11 @@ func (c *Client) handleSTUNMessage(data []byte, from net.Addr) error {
 	// - stun.ClassErrorResponse
 
 	trKey := b64.StdEncoding.EncodeToString(msg.TransactionID[:])
+
+	c.mutexTrMap.Lock()
 	tr, ok := c.trMap.Find(trKey)
 	if !ok {
+		c.mutexTrMap.Unlock()
 		// silently discard
 		c.log.Debugf("no transaction for %s", msg.String())
 		return nil
@@ -473,6 +481,7 @@ func (c *Client) handleSTUNMessage(data []byte, from net.Addr) error {
 	// End the transaction
 	tr.StopRtxTimer()
 	c.trMap.Delete(trKey)
+	c.mutexTrMap.Unlock()
 
 	if !tr.WriteResult(client.TransactionResult{
 		Msg:     msg,
@@ -512,6 +521,9 @@ func (c *Client) handleChannelData(data []byte) error {
 }
 
 func (c *Client) onRtxTimeout(trKey string, nRtx int) {
+	c.mutexTrMap.Lock()
+	defer c.mutexTrMap.Unlock()
+
 	tr, ok := c.trMap.Find(trKey)
 	if !ok {
 		return // already gone

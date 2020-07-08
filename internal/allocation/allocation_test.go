@@ -1,3 +1,5 @@
+// +build !js
+
 package allocation
 
 import (
@@ -8,8 +10,8 @@ import (
 	"time"
 
 	"github.com/mudutv/stun"
-	"github.com/mudutv/turn/internal/ipnet"
-	"github.com/mudutv/turn/internal/proto"
+	"github.com/mudutv/turn/v2/internal/ipnet"
+	"github.com/mudutv/turn/v2/internal/proto"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -82,7 +84,6 @@ func subTestAddPermission(t *testing.T) {
 
 	foundPermission := a.GetPermission(p.Addr)
 	assert.Equal(t, p, foundPermission)
-
 }
 
 func subTestRemovePermission(t *testing.T) {
@@ -216,7 +217,7 @@ func subTestAllocationClose(t *testing.T) {
 func subTestPacketHandler(t *testing.T) {
 	network := "udp"
 
-	m := newTestManager()
+	m, _ := newTestManager()
 
 	// turn server initialization
 	turnSocket, err := net.ListenPacket(network, "127.0.0.1:0")
@@ -247,7 +248,7 @@ func subTestPacketHandler(t *testing.T) {
 	a, err := m.CreateAllocation(&FiveTuple{
 		SrcAddr: clientListener.LocalAddr(),
 		DstAddr: turnSocket.LocalAddr(),
-	}, turnSocket, net.ParseIP("127.0.0.1"), 0, proto.DefaultLifetime)
+	}, turnSocket, 0, proto.DefaultLifetime)
 
 	assert.Nil(t, err, "should succeed")
 

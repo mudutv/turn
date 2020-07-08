@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/mudutv/logging"
-	"github.com/mudutv/turn"
+	"github.com/mudutv/turn/v2"
 )
 
 func main() {
@@ -28,21 +28,21 @@ func main() {
 		log.Fatalf("'user' is required")
 	}
 
-	cred := strings.Split(*user, "=")
-
-	// TURN client won't create a local listening socket by itself.
-	conn, err := net.ListenPacket("udp4", "0.0.0.0:0")
+	// Dial TURN Server
+	turnServerAddr := fmt.Sprintf("%s:%d", *host, *port)
+	conn, err := net.Dial("tcp", turnServerAddr)
 	if err != nil {
 		panic(err)
 	}
-	defer conn.Close()
 
-	turnServerAddr := fmt.Sprintf("%s:%d", *host, *port)
+	cred := strings.Split(*user, "=")
 
+	// Start a new TURN Client and wrap our net.Conn in a STUNConn
+	// This allows us to simulate datagram based communication over a net.Conn
 	cfg := &turn.ClientConfig{
 		STUNServerAddr: turnServerAddr,
 		TURNServerAddr: turnServerAddr,
-		Conn:           conn,
+		Conn:           turn.NewSTUNConn(conn),
 		Username:       cred[0],
 		Password:       cred[1],
 		Realm:          *realm,
@@ -68,7 +68,11 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer relayConn.Close()
+	defer func() {
+		if closeErr := relayConn.Close(); closeErr != nil {
+			panic(closeErr)
+		}
+	}()
 
 	// The relayConn's local address is actually the transport
 	// address assigned on the TURN server.
@@ -96,7 +100,11 @@ func doPingTest(client *turn.Client, relayConn net.PacketConn) error {
 	if err != nil {
 		panic(err)
 	}
-	defer pingerConn.Close()
+	defer func() {
+		if closeErr := pingerConn.Close(); closeErr != nil {
+			panic(closeErr)
+		}
+	}()
 
 	// Punch a UDP hole for the relayConn by sending a data to the mappedAddr.
 	// This will trigger a TURN client to generate a permission request to the
@@ -111,13 +119,13 @@ func doPingTest(client *turn.Client, relayConn net.PacketConn) error {
 	go func() {
 		buf := make([]byte, 1500)
 		for {
-			n, from, err := pingerConn.ReadFrom(buf)
-			if err != nil {
+			n, from, pingerErr := pingerConn.ReadFrom(buf)
+			if pingerErr != nil {
 				break
 			}
 
 			msg := string(buf[:n])
-			if sentAt, err := time.Parse(time.RFC3339Nano, msg); err == nil {
+			if sentAt, pingerErr := time.Parse(time.RFC3339Nano, msg); pingerErr == nil {
 				rtt := time.Since(sentAt)
 				log.Printf("%d bytes from from %s time=%d ms\n", n, from.String(), int(rtt.Seconds()*1000))
 			}
@@ -128,14 +136,13 @@ func doPingTest(client *turn.Client, relayConn net.PacketConn) error {
 	go func() {
 		buf := make([]byte, 1500)
 		for {
-			n, from, err := relayConn.ReadFrom(buf)
-			if err != nil {
+			n, from, readerErr := relayConn.ReadFrom(buf)
+			if readerErr != nil {
 				break
 			}
 
 			// Echo back
-			_, err = relayConn.WriteTo(buf[:n], from)
-			if err != nil {
+			if _, readerErr = relayConn.WriteTo(buf[:n], from); readerErr != nil {
 				break
 			}
 		}

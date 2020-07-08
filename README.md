@@ -4,83 +4,50 @@
   Pion TURN
   <br>
 </h1>
-<h4 align="center">An extendable TURN server written in Go</h4>
+<h4 align="center">A toolkit for building TURN clients and servers in Go</h4>
 <p align="center">
   <a href="https://pion.ly"><img src="https://img.shields.io/badge/pion-turn-gray.svg?longCache=true&colorB=brightgreen" alt="Pion TURN"></a>
   <a href="http://gophers.slack.com/messages/pion"><img src="https://img.shields.io/badge/join-us%20on%20slack-gray.svg?longCache=true&logo=slack&colorB=brightgreen" alt="Slack Widget"></a>
-  <a href="https://waffle.io/pion/webrtc"><img src="https://img.shields.io/badge/pm-waffle-gray.svg?longCache=true&colorB=brightgreen" alt="Waffle board"></a>
+  <a href="https://github.com/mudutv/awesome-pion" alt="Awesome Pion"><img src="https://cdn.rawgit.com/sindresorhus/awesome/d7305f38d29fed78fa85652e3a63e154dd8e8829/media/badge.svg"></a>
   <br>
-  <a href="https://travis-ci.org/pion/turn"><img src="https://travis-ci.org/pion/turn.svg?branch=master" alt="Build Status"></a>
-  <a href="https://godoc.org/github.com/mudutv/turn"><img src="https://godoc.org/github.com/mudutv/turn?status.svg" alt="GoDoc"></a>
-  <a href="https://codecov.io/gh/pion/turn"><img src="https://codecov.io/gh/pion/turn/branch/master/graph/badge.svg" alt="Coverage Status"></a>
+  <a href="https://travis-ci.org/mudutv/turn"><img src="https://travis-ci.org/mudutv/turn.svg?branch=master" alt="Build Status"></a>
+  <a href="https://pkg.go.dev/github.com/mudutv/turn/v2"><img src="https://godoc.org/github.com/mudutv/turn?status.svg" alt="GoDoc"></a>
+  <a href="https://codecov.io/gh/mudutv/turn"><img src="https://codecov.io/gh/mudutv/turn/branch/master/graph/badge.svg" alt="Coverage Status"></a>
   <a href="https://goreportcard.com/report/github.com/mudutv/turn"><img src="https://goreportcard.com/badge/github.com/mudutv/turn" alt="Go Report Card"></a>
-  <a href="https://www.codacy.com/app/Sean-Der/turn"><img src="https://api.codacy.com/project/badge/Grade/d53ec6c70576476cb16c140c2964afde" alt="Codacy Badge"></a>
+  <a href="https://www.codacy.com/app/mudutv/turn"><img src="https://api.codacy.com/project/badge/Grade/d53ec6c70576476cb16c140c2964afde" alt="Codacy Badge"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
 </p>
 <br>
 
-A TURN server written in Go that is designed to be scalable, extendable and embeddable out of the box.
-For simple use cases it only requires downloading 1 static binary, and setting 3 options.
+Pion TURN is a Go toolkit for building TURN servers and clients. We wrote it to solve problems we had when building RTC projects.
 
-See [DESIGN.md](DESIGN.md) for the the features it offers, and future goals.
+* **Deployable** - Use modern tooling of the Go ecosystem. Stop generating config files.
+* **Embeddable** - Include `pion/turn` in your existing applications. No need to manage another service.
+* **Extendable** - TURN as an API so you can easily integrate with your existing monitoring and metrics.
+* **Maintainable** - `pion/turn` is simple and well documented. Designed for learning and easy debugging.
+* **Portable** - Quickly deploy to multiple architectures/platforms just by setting an environment variable.
+* **Safe** - Stability and safety is important for network services. Go provides everything we need.
+* **Scalable** - Create allocations and mutate state at runtime. Designed to make scaling easy.
 
-### Quick Start
-If you want just a simple TURN server with a few static usernames `simple-turn` will perfectly suit your purposes. If you have
-custom requirements such as a database proceed to extending.
+# Using
+`pion/turn` is an API for building STUN/TURN clients and servers, not a binary you deploy then configure. It may require copying our examples and
+making minor modifications to fit your need, no knowledge of Go is required however. You may be able to download the pre-made binaries of our examples
+if you wish to get started quickly.
 
-`simple-turn` is a single static binary, and all config is driven by environment variables. On a fresh Linux AWS instance these are all the steps you would need.
-```
-$ wget -q https://github.com/mudutv/turn/releases/download/1.0.3/simple-turn-linux-amd64
-$ chmod +x simple-turn-linux-amd64
-$ export USERS='user=password foo=bar'
-$ export REALM=my-server.com
-$ export UDP_PORT=3478
-$ ./simple-turn-linux-amd64
-````
+The advantage of this is that you don't need to deal with complicated config files, or custom APIs to modify the state of Pion TURN.
+After you instantiate an instance of a Pion TURN server or client you interact with it like any library. The quickest way to get started is to look at the
+[examples](examples) or [GoDoc](https://godoc.org/github.com/mudutv/turn)
 
-To explain what every step does
-* Download simple-turn for Linux x64, see [release](https://github.com/mudutv/turn/releases) for other platforms
-* Make it executable
-* Configure auth, in the form of `USERNAME=PASSWORD USERNAME=PASSWORD` with no limits
-* Set your realm, this is the public URL or name of your server
-* Set the port you listen on, 3478 is the default port for TURN
+# Examples
+We try to cover most common use cases in [examples](examples). If more examples could be helpful please file an issue, we are always looking
+to expand and improve `pion/turn` to make it easier for developers.
 
-That is it! Then to use your new TURN server your WebRTC config would look like
-```
-{ iceServers: [{
-  urls: "turn:YOUR_SERVER"
-  username: "user",
-  credential: "password"
-}]
-```
----
+To build any example you just need to run `go build` in the directory of the example you care about.
+It is also very easy to [cross compile](https://dave.cheney.net/2015/08/22/cross-compilation-with-go-1-5) Go programs.
 
-If you are using Windows you would set these values in Powershell by doing. Also make sure your firewall is configured properly.
-```
-> $env:USERS = "user=password foo=bar"
-> $env:REALM = "my-server.com"
-> $env:UDP_PORT = 3478
-```
-### Extending
-See [simple-turn](https://github.com/mudutv/turn/blob/master/cmd/simple-turn/main.go)
+You can also see `pion/turn` usage in [pion/ice](https://github.com/mudutv/ice)
 
-pion-turn can be configured by implementing [these callbacks](https://github.com/mudutv/turn/blob/master/turn.go#L11) and by passing [these arguments](https://github.com/mudutv/turn/blob/master/turn.go#L11)
-
-All that `simple-turn` does is take environment variables, and then uses the same API.
-
-
-### Developing
-For developing a Dockerfile is available with features like hot-reloads, and is meant to be volume mounted.
-Make sure you also have github.com/mudutv/pkg in your path, or you can exclude the second volume mount.
-
-This is only meant for development, see [demo-conference](https://github.com/mudutv/demo-conference)
-to see TURN usage as a user.
-```
-docker build -t turn .
-docker run -v $(pwd):/usr/local/src/github.com/mudutv/turn -v $(pwd)/../pkg:/usr/local/src/github.com/mudutv/pkg turn
-```
-
-Currently only Linux is supported until Docker supports full (host <-> container) networking on Windows/OSX
+# [FAQ](https://github.com/mudutv/webrtc/wiki/FAQ)
 
 ### RFCs
 #### Implemented
@@ -92,7 +59,7 @@ Currently only Linux is supported until Docker supports full (host <-> container
 * [RFC 6156: Traversal Using Relays around NAT (TURN) Extension for IPv6](https://tools.ietf.org/html/rfc6156)
 
 ### Community
-Pion has an active community on the [Golang Slack](https://invite.slack.golangbridge.org/). Sign up and join the **#pion** channel for discussions and support. You can also use [Pion mailing list](https://groups.google.com/forum/#!forum/pion).
+Pion has an active community on the [Golang Slack](https://pion.ly/slack). Sign up and join the **#pion** channel for discussions and support.
 
 We are always looking to support **your projects**. Please reach out if you have something to build!
 
@@ -115,6 +82,11 @@ Check out the [CONTRIBUTING.md](CONTRIBUTING.md) to join the group of amazing pe
 * [Lukas Rezek](https://github.com/lrezek)
 * [Hugo Arregui](https://github.com/hugoArregui)
 * [Aaron France](https://github.com/AeroNotix)
+* [Atsushi Watanabe](https://github.com/at-wat)
+* [Tom Clift](https://github.com/tclift)
+* [lllf](https://github.com/LittleLightLittleFire)
+* nindolabs (Marouane)
+* [Onwuka Gideon](https://github.com/dongido001)
 
 ### License
 MIT License - see [LICENSE.md](LICENSE.md) for full text

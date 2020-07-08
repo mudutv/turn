@@ -1,3 +1,5 @@
+// +build !js
+
 package turn
 
 import (
@@ -6,252 +8,314 @@ import (
 	"time"
 
 	"github.com/mudutv/logging"
-	"github.com/mudutv/turn/internal/proto"
+	"github.com/mudutv/transport/test"
+	"github.com/mudutv/transport/vnet"
+	"github.com/mudutv/turn/v2/internal/proto"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestServer(t *testing.T) {
-	loggerFactory := logging.NewDefaultLoggerFactory()
-	log := loggerFactory.NewLogger("test")
+	lim := test.TimeOut(time.Second * 30)
+	defer lim.Stop()
 
-	credMap := map[string]string{
-		"user": "pass",
+	report := test.CheckRoutines(t)
+	defer report()
+
+	loggerFactory := logging.NewDefaultLoggerFactory()
+
+	credMap := map[string][]byte{
+		"user": GenerateAuthKey("user", "pion.ly", "pass"),
 	}
 
 	t.Run("simple", func(t *testing.T) {
+		udpListener, err := net.ListenPacket("udp4", "0.0.0.0:3478")
+		assert.NoError(t, err)
 
-		server := NewServer(&ServerConfig{
-			AuthHandler: func(username string, srcAddr net.Addr) (password string, ok bool) {
+		server, err := NewServer(ServerConfig{
+			AuthHandler: func(username, realm string, srcAddr net.Addr) (key []byte, ok bool) {
 				if pw, ok := credMap[username]; ok {
 					return pw, true
 				}
-				return "", false
+				return nil, false
+			},
+			PacketConnConfigs: []PacketConnConfig{
+				{
+					PacketConn: udpListener,
+					RelayAddressGenerator: &RelayAddressGeneratorStatic{
+						RelayAddress: net.ParseIP("127.0.0.1"),
+						Address:      "0.0.0.0",
+					},
+				},
 			},
 			Realm:         "pion.ly",
 			LoggerFactory: loggerFactory,
 		})
+		assert.NoError(t, err)
 
 		assert.Equal(t, proto.DefaultLifetime, server.channelBindTimeout, "should match")
 
-		err := server.AddListeningIPAddr("127.0.0.1")
-		assert.NoError(t, err, "should succeed")
-
-		log.Debug("start listening...")
-		err = server.Start()
-		assert.NoError(t, err, "should succeed")
-
-		// make sure the server is listening before running
-		// the client.
-		time.Sleep(100 * time.Microsecond)
-
-		log.Debug("creating a client.")
 		conn, err := net.ListenPacket("udp4", "0.0.0.0:0")
-		if !assert.NoError(t, err, "should succeed") {
-			return
-		}
+		assert.NoError(t, err)
+
 		client, err := NewClient(&ClientConfig{
 			Conn:          conn,
 			LoggerFactory: loggerFactory,
 		})
-		if !assert.NoError(t, err, "should succeed") {
-			return
-		}
-		err = client.Listen()
-		if !assert.NoError(t, err, "should succeed") {
-			return
-		}
-		defer client.Close()
+		assert.NoError(t, err)
+		assert.NoError(t, client.Listen())
 
-		log.Debug("sending a binding request.")
-		to := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 3478}
-		resp, err := client.SendBindingRequestTo(to)
+		_, err = client.SendBindingRequestTo(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 3478})
 		assert.NoError(t, err, "should succeed")
-		t.Logf("resp: %v", resp)
 
-		log.Debug("now closing the server...")
+		client.Close()
+		assert.NoError(t, conn.Close())
 
-		// Close server
-		err = server.Close()
-		assert.NoError(t, err, "should succeed")
+		assert.NoError(t, server.Close())
+	})
+}
+
+type VNet struct {
+	wan    *vnet.Router
+	net0   *vnet.Net // net (0) on the WAN
+	net1   *vnet.Net // net (1) on the WAN
+	netL0  *vnet.Net // net (0) on the LAN
+	server *Server
+}
+
+func (v *VNet) Close() error {
+	if err := v.server.Close(); err != nil {
+		return err
+	}
+	return v.wan.Stop()
+}
+
+func buildVNet() (*VNet, error) {
+	loggerFactory := logging.NewDefaultLoggerFactory()
+
+	// WAN
+	wan, err := vnet.NewRouter(&vnet.RouterConfig{
+		CIDR:          "0.0.0.0/0",
+		LoggerFactory: loggerFactory,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	net0 := vnet.NewNet(&vnet.NetConfig{
+		StaticIP: "1.2.3.4", // will be assigned to eth0
 	})
 
-	t.Run("Relay IPs default to the listening IPs", func(t *testing.T) {
-		server := NewServer(&ServerConfig{
-			AuthHandler: func(username string, srcAddr net.Addr) (password string, ok bool) {
-				if pw, ok := credMap[username]; ok {
-					return pw, true
-				}
-				return "", false
-			},
-			Realm:         "pion.ly",
-			LoggerFactory: loggerFactory,
-		})
+	err = wan.AddNet(net0)
+	if err != nil {
+		return nil, err
+	}
 
-		assert.Equal(t, proto.DefaultLifetime, server.channelBindTimeout, "should match")
-
-		err := server.AddListeningIPAddr("127.0.0.1")
-		assert.NoError(t, err, "should succeed")
-
-		log.Debug("start listening...")
-		err = server.Start()
-		assert.NoError(t, err, "should succeed")
-
-		// make sure the server is listening before running
-		// the client.
-		time.Sleep(100 * time.Microsecond)
-
-		assert.Equal(t, 1, len(server.relayIPs), "should match")
-		assert.True(t, server.relayIPs[0].Equal(net.IPv4(127, 0, 0, 1)), "should match")
-
-		// Close server
-		err = server.Close()
-		assert.NoError(t, err, "should succeed")
+	net1 := vnet.NewNet(&vnet.NetConfig{
+		StaticIP: "1.2.3.5", // will be assigned to eth0
 	})
 
-	t.Run("AddRelayIPAddr", func(t *testing.T) {
-		server := NewServer(&ServerConfig{
-			AuthHandler: func(username string, srcAddr net.Addr) (password string, ok bool) {
-				if pw, ok := credMap[username]; ok {
-					return pw, true
-				}
-				return "", false
-			},
-			Realm:         "pion.ly",
-			LoggerFactory: loggerFactory,
-		})
+	err = wan.AddNet(net1)
+	if err != nil {
+		return nil, err
+	}
 
-		assert.Equal(t, proto.DefaultLifetime, server.channelBindTimeout, "should match")
-
-		err := server.AddListeningIPAddr("127.0.0.1")
-		assert.NoError(t, err, "should succeed")
-
-		err = server.AddRelayIPAddr("127.0.0.2")
-		assert.NoError(t, err, "should succeed")
-
-		err = server.AddRelayIPAddr("127.0.0.3")
-		assert.NoError(t, err, "should succeed")
-
-		log.Debug("start listening...")
-		err = server.Start()
-		assert.NoError(t, err, "should succeed")
-
-		// make sure the server is listening before running
-		// the client.
-		time.Sleep(100 * time.Microsecond)
-
-		assert.Equal(t, 2, len(server.relayIPs), "should match")
-		assert.True(t, server.relayIPs[0].Equal(net.IPv4(127, 0, 0, 2)), "should match")
-		assert.True(t, server.relayIPs[1].Equal(net.IPv4(127, 0, 0, 3)), "should match")
-
-		// Close server
-		err = server.Close()
-		assert.NoError(t, err, "should succeed")
+	// LAN
+	lan, err := vnet.NewRouter(&vnet.RouterConfig{
+		StaticIP: "5.6.7.8", // this router's external IP on eth0
+		CIDR:     "192.168.0.0/24",
+		NATType: &vnet.NATType{
+			MappingBehavior:   vnet.EndpointIndependent,
+			FilteringBehavior: vnet.EndpointIndependent,
+		},
+		LoggerFactory: loggerFactory,
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	t.Run("Adds SOFTWARE attribute to response", func(t *testing.T) {
-		const testSoftware = "SERVER_SOFTWARE"
-		cfg := &ServerConfig{
-			AuthHandler: func(username string, srcAddr net.Addr) (password string, ok bool) {
-				if pw, ok := credMap[username]; ok {
-					return pw, true
-				}
-				return "", false
+	netL0 := vnet.NewNet(&vnet.NetConfig{})
+
+	if err = lan.AddNet(netL0); err != nil {
+		return nil, err
+	}
+
+	if err = wan.AddRouter(lan); err != nil {
+		return nil, err
+	}
+
+	if err = wan.Start(); err != nil {
+		return nil, err
+	}
+
+	// start server...
+	credMap := map[string][]byte{"user": GenerateAuthKey("user", "pion.ly", "pass")}
+
+	udpListener, err := net0.ListenPacket("udp4", "0.0.0.0:3478")
+	if err != nil {
+		return nil, err
+	}
+
+	server, err := NewServer(ServerConfig{
+		AuthHandler: func(username, realm string, srcAddr net.Addr) (key []byte, ok bool) {
+			if pw, ok := credMap[username]; ok {
+				return pw, true
+			}
+			return nil, false
+		},
+		Realm: "pion.ly",
+		PacketConnConfigs: []PacketConnConfig{
+			{
+				PacketConn: udpListener,
+				RelayAddressGenerator: &RelayAddressGeneratorNone{
+					Address: "1.2.3.4",
+					Net:     net0,
+				},
 			},
-			Realm:         "pion.ly",
-			Software:      testSoftware,
-			LoggerFactory: loggerFactory,
-		}
+		},
+		LoggerFactory: loggerFactory,
+	})
+	if err != nil {
+		return nil, err
+	}
 
-		server := NewServer(cfg)
+	// register host names
+	err = wan.AddHost("stun.pion.ly", "1.2.3.4")
+	if err != nil {
+		return nil, err
+	}
+	err = wan.AddHost("turn.pion.ly", "1.2.3.4")
+	if err != nil {
+		return nil, err
+	}
+	err = wan.AddHost("echo.pion.ly", "1.2.3.5")
+	if err != nil {
+		return nil, err
+	}
 
-		err := server.AddListeningIPAddr("127.0.0.1")
+	return &VNet{
+		wan:    wan,
+		net0:   net0,
+		net1:   net1,
+		netL0:  netL0,
+		server: server,
+	}, nil
+}
+
+func TestServerVNet(t *testing.T) {
+	lim := test.TimeOut(time.Second * 30)
+	defer lim.Stop()
+
+	report := test.CheckRoutines(t)
+	defer report()
+
+	loggerFactory := logging.NewDefaultLoggerFactory()
+	log := loggerFactory.NewLogger("test")
+
+	t.Run("SendBindingRequest", func(t *testing.T) {
+		v, err := buildVNet()
+		assert.NoError(t, err)
+		defer func() {
+			assert.NoError(t, v.Close())
+		}()
+
+		lconn, err := v.netL0.ListenPacket("udp4", "0.0.0.0:0")
 		assert.NoError(t, err, "should succeed")
-
-		log.Debug("start listening...")
-		err = server.Start()
-		assert.NoError(t, err, "should succeed")
-
-		// make sure the server is listening before running
-		// the client.
-		time.Sleep(100 * time.Microsecond)
-
-		lconn, err := net.ListenPacket("udp4", "0.0.0.0:0")
-		if !assert.NoError(t, err, "should succeed") {
-			return
-		}
-		defer lconn.Close() // nolint:errcheck,gosec
+		defer func() {
+			assert.NoError(t, lconn.Close())
+		}()
 
 		log.Debug("creating a client.")
 		client, err := NewClient(&ClientConfig{
-			Conn:          lconn,
-			LoggerFactory: loggerFactory,
+			STUNServerAddr: "1.2.3.4:3478",
+			Conn:           lconn,
+			Net:            v.netL0,
+			LoggerFactory:  loggerFactory,
 		})
-		if !assert.NoError(t, err, "should succeed") {
-			return
-		}
-		err = client.Listen()
-		if !assert.NoError(t, err, "should succeed") {
-			return
-		}
+		assert.NoError(t, err, "should succeed")
+		assert.NoError(t, client.Listen(), "should succeed")
 		defer client.Close()
 
 		log.Debug("sending a binding request.")
-		resp, err := client.SendBindingRequestTo(&net.UDPAddr{
-			IP:   net.IPv4(127, 0, 0, 1),
-			Port: 3478,
-		})
-		assert.NoError(t, err, "should succeed")
-		t.Logf("resp: %v", resp)
+		reflAddr, err := client.SendBindingRequest()
+		assert.NoError(t, err)
+		log.Debugf("mapped-address: %v", reflAddr.String())
+		udpAddr := reflAddr.(*net.UDPAddr)
 
-		log.Debug("now closing the server...")
-
-		// Close server
-		err = server.Close()
-		assert.NoError(t, err, "should succeed")
+		// The mapped-address should have IP address that was assigned
+		// to the LAN router.
+		assert.True(t, udpAddr.IP.Equal(net.IPv4(5, 6, 7, 8)), "should match")
 	})
 
-	t.Run("AddExternalIPAddr", func(t *testing.T) {
-		server := NewServer(&ServerConfig{
-			LoggerFactory: loggerFactory,
+	t.Run("Echo via relay", func(t *testing.T) {
+		v, err := buildVNet()
+		assert.NoError(t, err)
+
+		lconn, err := v.netL0.ListenPacket("udp4", "0.0.0.0:0")
+		assert.NoError(t, err)
+
+		log.Debug("creating a client.")
+		client, err := NewClient(&ClientConfig{
+			STUNServerAddr: "stun.pion.ly:3478",
+			TURNServerAddr: "turn.pion.ly:3478",
+			Username:       "user",
+			Password:       "pass",
+			Conn:           lconn,
+			Net:            v.netL0,
+			LoggerFactory:  loggerFactory,
 		})
 
-		err := server.AddExternalIPAddr("1.2.3.4")
-		assert.NoError(t, err, "should succeed")
+		assert.NoError(t, err)
+		assert.NoError(t, client.Listen())
 
-		assert.Equal(t, 1, len(server.extIPMappings), "should be 1")
-		assert.True(
-			t,
-			server.extIPMappings[0][0].Equal(net.ParseIP("1.2.3.4")),
-			"should be true")
-		assert.Nil(t, server.extIPMappings[0][1], "should be nil")
-	})
+		log.Debug("sending a binding request.")
+		conn, err := client.Allocate()
+		assert.NoError(t, err)
 
-	t.Run("AddExternalIPAddr 2", func(t *testing.T) {
-		server := NewServer(&ServerConfig{
-			LoggerFactory: loggerFactory,
-		})
+		log.Debugf("laddr: %s", conn.LocalAddr().String())
 
-		err := server.AddExternalIPAddr("1.2.3.4/10.0.0.2")
-		assert.NoError(t, err, "should succeed")
-		err = server.AddExternalIPAddr("1.2.3.5/10.0.0.3")
-		assert.NoError(t, err, "should succeed")
+		echoConn, err := v.net1.ListenPacket("udp4", "1.2.3.5:5678")
+		assert.NoError(t, err)
 
-		assert.Equal(t, 2, len(server.extIPMappings), "should be 2")
-		assert.True(
-			t,
-			server.extIPMappings[0][0].Equal(net.ParseIP("1.2.3.4")),
-			"should be true")
-		assert.True(
-			t,
-			server.extIPMappings[0][1].Equal(net.ParseIP("10.0.0.2")),
-			"should be true")
-		assert.True(
-			t,
-			server.extIPMappings[1][0].Equal(net.ParseIP("1.2.3.5")),
-			"should be true")
-		assert.True(
-			t,
-			server.extIPMappings[1][1].Equal(net.ParseIP("10.0.0.3")),
-			"should be true")
+		go func() {
+			buf := make([]byte, 1500)
+			for {
+				n, from, err2 := echoConn.ReadFrom(buf)
+				if err2 != nil {
+					break
+				}
+
+				// verify the message was received from the relay address
+				assert.Equal(t, conn.LocalAddr().String(), from.String(), "should match")
+				assert.Equal(t, "Hello", string(buf[:n]), "should match")
+
+				// echo the data
+				_, err2 = echoConn.WriteTo(buf[:n], from)
+				assert.NoError(t, err2)
+			}
+		}()
+
+		buf := make([]byte, 1500)
+
+		for i := 0; i < 10; i++ {
+			log.Debug("sending \"Hello\"..")
+			_, err = conn.WriteTo([]byte("Hello"), echoConn.LocalAddr())
+			assert.NoError(t, err)
+
+			_, from, err2 := conn.ReadFrom(buf)
+			assert.NoError(t, err2)
+
+			// verify the message was received from the relay address
+			assert.Equal(t, echoConn.LocalAddr().String(), from.String(), "should match")
+
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		time.Sleep(100 * time.Millisecond)
+		client.Close()
+
+		assert.NoError(t, conn.Close(), "should succeed")
+		assert.NoError(t, echoConn.Close(), "should succeed")
+		assert.NoError(t, lconn.Close(), "should succeed")
+		assert.NoError(t, v.Close(), "should succeed")
 	})
 }

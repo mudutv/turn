@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/mudutv/logging"
-	"github.com/mudutv/turn/internal/proto"
+	"github.com/mudutv/turn/v2/internal/proto"
 )
 
 // ChannelBind represents a TURN Channel
